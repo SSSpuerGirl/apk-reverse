@@ -250,6 +250,9 @@ def main(argv=None):
         binary = built
         version, _ = rasc_version(binary)
         payload['rasc'] = {'path': built, 'version': version, 'error': None}
+        # The successful build path used to fall through with no 'result', so the
+        # report line below raised KeyError *after* a build that had worked.
+        payload['result'] = 'ok'
 
     if args.verify:
         if not binary:

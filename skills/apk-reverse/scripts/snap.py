@@ -65,6 +65,23 @@ def run(cmd: list[str], timeout: int) -> tuple[int, str, str]:
         return 127, "", "not found: %s" % cmd[0]
 
 
+def run_raw(cmd: list[str], timeout: int) -> tuple[int, bytes, str]:
+    """Like run(), but returns stdout as bytes.
+
+    Binary payloads (a PNG from `exec-out screencap`) must not go through the
+    text decoder: universal-newline translation rewrites `\\r\\n` to `\\n` and the
+    re-encode then loses a byte every time, producing a file that is the right
+    size and not a valid image. Text callers use run(); capture_image uses this.
+    """
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return p.returncode, p.stdout or b"", (p.stderr or b"").decode("utf-8", "replace")
+    except subprocess.TimeoutExpired:
+        return 124, b"", "TIMEOUT after %ss: %s" % (timeout, " ".join(cmd[:4]))
+    except FileNotFoundError:
+        return 127, b"", "not found: %s" % cmd[0]
+
+
 class Dev:
     def __init__(self, adb: str, serial: str | None):
         self.adb = adb
@@ -115,13 +132,12 @@ def capture_image(dev: Dev, workdir: str, name: str) -> tuple[int, str]:
         n = os.path.getsize(local)
         if n > 0:
             return n, hashlib.sha256(open(local, "rb").read()).hexdigest()[:12]
-    # fallback: stream to host
-    rc, out, err = run(dev.base + ["exec-out", "screencap -p"], timeout=120)
-    if rc == 0:
-        data = out.encode("latin1", "ignore") if isinstance(out, str) else b""
-        if data:
-            open(local, "wb").write(data)
-            return len(data), hashlib.sha256(data).hexdigest()[:12]
+    # fallback: stream to host. exec-out is binary -- it must not go through the
+    # text decoder, or every \r\n becomes \n and the PNG loses a byte per CR.
+    rc, data, err = run_raw(dev.base + ["exec-out", "screencap -p"], timeout=120)
+    if rc == 0 and data:
+        open(local, "wb").write(data)
+        return len(data), hashlib.sha256(data).hexdigest()[:12]
     return 0, ""
 
 
